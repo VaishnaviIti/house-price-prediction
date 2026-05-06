@@ -1,6 +1,7 @@
 import joblib
 import pandas as pd
 import streamlit as st
+import urllib.parse
 
 # # -------------------- CUSTOM CSS --------------------
 # st.markdown("""
@@ -118,10 +119,12 @@ col1, col2 = st.columns(2)
 with col1:
     location = st.selectbox("📍 Location", sorted(locations))
     sqft = st.number_input("📐 Total Square Feet", min_value=300)
+    age_of_building = st.number_input("🏗️ Age of Building (years)", min_value=0, max_value=100, value=5, step=1)
 
 with col2:
     bath = st.selectbox("🛁 Bathrooms", sorted(df_raw["bath"].unique()))
     bhk = st.selectbox("🏠 BHK", sorted(df_raw["bhk"].unique()))
+    parking_area = st.number_input("🚗 Parking Area (sqft)", min_value=0, max_value=500, value=0, step=1)
 
 # -------------------- PREPARE INPUT --------------------
 def prepare_input():
@@ -138,14 +141,52 @@ def prepare_input():
     if loc_col in input_dict:
         input_dict[loc_col] = 1
 
+    # Add optional age and parking features if the model was trained with them
+    if 'age_of_building' in input_dict:
+        input_dict['age_of_building'] = age_of_building
+    if 'parking_area' in input_dict:
+        input_dict['parking_area'] = parking_area
+
     return pd.DataFrame([input_dict])
+
+# -------------------- WHATSAPP SHARE --------------------
+def create_whatsapp_link(price, location, sqft, bhk, bath, age_of_building, parking_area):
+    message = (
+        f"House Price Estimate:\n"
+        f"Location: {location}\n"
+        f"Size: {sqft} sqft, {bhk} BHK, {bath} bathrooms\n"
+        f"Age: {age_of_building} years, Parking: {parking_area} sqft\n"
+        f"Estimated Price: ₹{price*100000:,.0f}\n"
+        "Contact me for more details!"
+    )
+    encoded = urllib.parse.quote(message)
+    return f"https://wa.me/?text={encoded}"
 
 # -------------------- PREDICTION --------------------
 if st.button("💰 Predict Price"):
     input_df = prepare_input()
 
     prediction = model.predict(input_df)
-    price = float(f"{prediction[0]:.2f}")
+    base_price = float(f"{prediction[0]:.2f}")
+
+    # Apply a small age/parking adjustment on top of the model's base estimate.
+    # This allows the app to reflect the selected building age and parking area even if
+    # the current saved model was trained on the original feature set.
+    age_factor = max(0.85, 1 - (age_of_building * 0.003))
+    parking_factor = 1 + min(parking_area, 300) * 0.001
+    price = float(f"{base_price * age_factor * parking_factor:.2f}")
+
+    if age_of_building > 0 or parking_area > 0:
+        st.info("🔧 Estimate adjusted for building age and parking area.")
+
+    share_url = create_whatsapp_link(price, location, sqft, bhk, bath, age_of_building, parking_area)
+    st.markdown(
+        f"<a href=\"{share_url}\" target=\"_blank\" style=\"text-decoration:none;\">"
+        f"<button style=\"background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:8px; font-size:16px; cursor:pointer;\">"
+        "Share result on WhatsApp"
+        "</button></a>",
+        unsafe_allow_html=True,
+    )
 
     # st.markdown(f"""
     #     <div class="result-card">
@@ -174,6 +215,36 @@ if st.button("💰 Predict Price"):
             </h1>
         </div>
     """, unsafe_allow_html=True)
+
+    # ---------------- PREDICTION EXPLANATION ----------------
+    with st.expander("🔍 How is this prediction calculated?"):
+        st.markdown("""
+        **Prediction Formula:**
+        
+        ```
+        Final Price = Base ML Estimate × Age Factor × Parking Factor
+        ```
+        
+        **Components:**
+        
+        1. **Base ML Estimate**: Predicted by a Random Forest model trained on historical Bengaluru house data using features like location, square footage, bathrooms, and BHK.
+        
+        2. **Age Factor**: Adjusts for building age
+           - Formula: `max(0.85, 1 - (age_years × 0.003))`
+           - Reduces price by up to 15% for older buildings (100+ years)
+        
+        3. **Parking Factor**: Adds premium for parking space
+           - Formula: `1 + min(parking_sqft, 300) × 0.001`
+           - Increases price by up to 30% for larger parking areas
+        
+        **Example Calculation:**
+        - Base estimate: ₹59.49 lakhs
+        - Age: 5 years → Factor: 0.985
+        - Parking: 100 sqft → Factor: 1.1
+        - Final: ₹59.49 × 0.985 × 1.1 = ₹64.46 lakhs
+        
+        *Note: Age and parking adjustments are heuristic estimates. For production use, retrain the model with these features.*
+        """)
 
     # ---------------- PRICE INSIGHT ----------------
     st.subheader("💡 Price Insight")
@@ -218,6 +289,30 @@ if st.button("💰 Predict Price"):
 
         fig.tight_layout()
         st.pyplot(fig, use_container_width=False)
+
+# -------------------- HOUSE IMAGES GALLERY --------------------
+st.subheader("🏠 Sample Property Images")
+
+# Display real house images from free stock photos
+house_images = [
+    {
+        "url": "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+        "caption": "Modern 2BHK Apartment"
+    },
+    {
+        "url": "https://images.unsplash.com/photo-1570129477492-45c003edd2be?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+        "caption": "Spacious Villa"
+    },
+    {
+        "url": "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+        "caption": "Luxury Townhouse"
+    }
+]
+
+cols = st.columns(3)
+for i, img in enumerate(house_images):
+    with cols[i]:
+        st.image(img["url"], caption=img["caption"], use_container_width=True)
 
 # -------------------- FOOTER --------------------
 st.markdown("---")
