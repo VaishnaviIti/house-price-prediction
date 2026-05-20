@@ -2,6 +2,9 @@ import joblib
 import pandas as pd
 import streamlit as st
 import urllib.parse
+import os
+import json
+import hashlib
 
 # # -------------------- CUSTOM CSS --------------------
 # st.markdown("""
@@ -77,7 +80,98 @@ model_features = joblib.load("model_columns.joblib")
 
 # # -------------------- LOAD DATA --------------------
 df = pd.read_csv("cleaned_df.csv")
+USERS_FILE = "users.json"
 
+def hash_password(password):
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2)
+
+
+def signup_user(full_name, login_id, password):
+    users = load_users()
+    if login_id in users:
+        return False, "This email/phone is already registered."
+    users[login_id] = {
+        "name": full_name,
+        "password_hash": hash_password(password)
+    }
+    save_users(users)
+    return True, "Signup successful."
+
+
+def authenticate_user(login_id, password):
+    users = load_users()
+    user = users.get(login_id)
+    if not user:
+        return False
+    return user.get("password_hash") == hash_password(password)
+
+
+def logout():
+    st.session_state.authenticated = False
+    st.session_state.user_name = ""
+    st.experimental_rerun()
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_name" not in st.session_state:
+    st.session_state.user_name = ""
+
+if not st.session_state.authenticated:
+    st.title("Welcome to PrimeEstate")
+    st.write("Please sign up or log in to continue.")
+    auth_mode = st.radio("Choose action", ["Login", "Sign Up"], horizontal=True)
+
+    if auth_mode == "Sign Up":
+        signup_name = st.text_input("Full Name", key="signup_name")
+        signup_id = st.text_input("Email or Phone", key="signup_id")
+        signup_password = st.text_input("Password", type="password", key="signup_password")
+        signup_confirm = st.text_input("Confirm Password", type="password", key="signup_confirm")
+        if st.button("Create Account", key="signup_button"):
+            if not signup_name or not signup_id or not signup_password or not signup_confirm:
+                st.error("Please fill in all fields.")
+            elif signup_password != signup_confirm:
+                st.error("Passwords do not match.")
+            else:
+                success, message = signup_user(signup_name.strip(), signup_id.strip(), signup_password)
+                if success:
+                    st.success(message)
+                    st.session_state.authenticated = True
+                    st.session_state.user_name = signup_name.strip()
+                    st.rerun()
+                else:
+                    st.error(message)
+    else:
+        login_id = st.text_input("Email or Phone", key="login_id")
+        login_password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Log In", key="login_button"):
+            if not login_id or not login_password:
+                st.error("Please enter both email/phone and password.")
+            elif authenticate_user(login_id.strip(), login_password):
+                users = load_users()
+                st.session_state.authenticated = True
+                st.session_state.user_name = users[login_id.strip()].get("name", "")
+                st.success(f"Welcome back, {st.session_state.user_name}!")
+                st.rerun()
+            else:
+                st.error("Invalid credentials. Please try again.")
+
+    st.stop()
 # -------------------- HEADER --------------------
 st.markdown("""
     <h1 style="text-align: center; font-weight: 800; color: #1E3A8A; margin-bottom: 0px;">
@@ -94,6 +188,10 @@ st.markdown("""
 # -------------------- SIDEBAR --------------------
 with st.sidebar:
     st.title("🏠 App Info")
+    if st.session_state.authenticated:
+        st.write(f"Logged in as: {st.session_state.user_name}")
+        if st.button("Logout"):
+            logout()
     st.image("house_logo.png", width=200)
     st.markdown("""
     ### Instructions:

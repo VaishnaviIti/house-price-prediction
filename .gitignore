@@ -22,3 +22,6 @@ dist/
 # macOS files
 .DS_Store
 
+
+# Local user credential storage
+users.json
